@@ -1,20 +1,35 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../../navigation/RootNavigator';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'TryOn'>;
+type Props = {
+    route?: {
+        params?: {
+            garmentId?: string;
+        };
+    };
+    navigation?: {
+        goBack: () => void;
+        canGoBack?: () => boolean;
+    };
+};
 
 export default function TryOnScreen({ route, navigation }: Props) {
-    const { garmentId } = route.params;
+    const garmentId = route?.params?.garmentId;
+    const canGoBack = navigation?.canGoBack ? navigation.canGoBack() : false;
 
     return (
         <View style={styles.container}>
-            <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-                <Text style={styles.backButtonText}>← Back</Text>
-            </Pressable>
+            {canGoBack && (
+                <Pressable onPress={() => navigation?.goBack()} style={styles.backButton}>
+                    <Text style={styles.backButtonText}>← Back</Text>
+                </Pressable>
+            )}
             <Text style={styles.title}>Virtual Try-On</Text>
-            <Text style={styles.subtitle}>Garment ID: {garmentId}</Text>
+            {garmentId ? (
+                <Text style={styles.subtitle}>Garment ID: {garmentId}</Text>
+            ) : (
+                <Text style={styles.subtitle}>Camera + AR try-on (Select a garment to begin)</Text>
+            )}
         </View>
     );
 }

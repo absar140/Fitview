@@ -1,4 +1,6 @@
-export type GarmentCategory = 'tops' | 'bottoms' | 'shoes' | 'accessories';
+// Expanded to match the actual categories shown in the Categories screen banners
+export type GarmentCategory = 'dresses' | 'outerwear' | 'knitwear' | 'bags' | 'shoes' | 'accessories';
+export type AssetType = '2d_mesh' | '3d_model';
 
 export interface AnchorProfile {
     primaryLandmarks: string[];
@@ -9,11 +11,11 @@ export interface AnchorProfile {
 export interface Garment {
     id: string;
     name: string;
-    category: GarmentCategory | string;
+    category: GarmentCategory;
     price: number;
     thumbnailUrl: string;
     runtimeAssetUrl: string;
-    assetType: '2d_mesh' | '3d_mesh' | string;
+    assetType: AssetType;
     anchorProfile: AnchorProfile;
     scale: number;
     mirror: boolean;
