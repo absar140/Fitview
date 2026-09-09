@@ -1,66 +1,112 @@
-import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../navigation/RootNavigator';
+import { useAuth } from '../../store/AuthContext';
 
-// Mock user data — replace with real auth/user data once a backend exists
-const user = {
-  name: 'Alex Johnson',
-  email: 'alex.johnson@email.com',
-  avatarUrl: 'https://placehold.co/200x200?text=AJ',
-};
-
-// Menu items shown in the profile list. Each is just a label + icon for now;
-// onPress handlers can be wired up once the corresponding screens exist
-// (e.g. Order History, Saved Items, Addresses, Payment Methods, Settings).
-const menuItems = [
-  { id: 'orders', label: 'order history', icon: '📦' },
-  { id: 'saved', label: 'saved items', icon: '♡' },
-  { id: 'addresses', label: 'shipping addresses', icon: '📍' },
-  { id: 'payment', label: 'payment methods', icon: '💳' },
-  { id: 'settings', label: 'settings', icon: '⚙' },
-  { id: 'help', label: 'help & support', icon: '❓' },
-];
+type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function ProfileScreen() {
+  const navigation = useNavigation<NavProp>();
+  const { user, isLoggedIn, login, signup, logout } = useAuth();
+
+  // Local form state for the inline login/signup form shown when logged out
+  const [isSignup, setIsSignup] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleSubmit = () => {
+    if (!email || !password || (isSignup && !name)) {
+      Alert.alert('Missing info', 'Please fill in all fields.');
+      return;
+    }
+
+    if (isSignup) {
+      const success = signup(name, email, password);
+      if (!success) Alert.alert('Account exists', 'That email is already registered. Try logging in instead.');
+    } else {
+      const success = login(email, password);
+      if (!success) Alert.alert('Login failed', 'Incorrect email or password.');
+    }
+  };
+
+  // --- LOGGED OUT STATE: show an inline login/signup form ---
+  if (!isLoggedIn) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.header}>profile</Text>
+
+        <View style={styles.authBox}>
+          <Text style={styles.authTitle}>{isSignup ? 'create an account' : 'log in to your account'}</Text>
+          <Text style={styles.authSubtitle}>
+            {isSignup
+              ? 'sign up to track orders and save your details'
+              : 'log in to view your orders and saved details'}
+          </Text>
+
+          {isSignup && (
+            <TextInput
+              style={styles.input}
+              placeholder="full name"
+              placeholderTextColor="#8A8778"
+              value={name}
+              onChangeText={setName}
+            />
+          )}
+          <TextInput
+            style={styles.input}
+            placeholder="email"
+            placeholderTextColor="#8A8778"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="password"
+            placeholderTextColor="#8A8778"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+
+          <Pressable style={styles.primaryButton} onPress={handleSubmit}>
+            <Text style={styles.primaryButtonText}>{isSignup ? 'sign up' : 'log in'}</Text>
+          </Pressable>
+
+          <Pressable onPress={() => setIsSignup(!isSignup)}>
+            <Text style={styles.switchText}>
+              {isSignup ? 'already have an account? log in' : "don't have an account? sign up"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  // --- LOGGED IN STATE: show real profile info ---
   return (
     <View style={styles.container}>
       <Text style={styles.header}>profile</Text>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* User info card */}
-        <View style={styles.userCard}>
-          <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-          <View style={{ marginLeft: 14 }}>
-            <Text style={styles.userName}>{user.name}</Text>
-            <Text style={styles.userEmail}>{user.email}</Text>
-          </View>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {user?.name?.split(' ').map((n) => n[0]).join('').toUpperCase() ?? '?'}
+          </Text>
         </View>
+        <Text style={styles.name}>{user?.name}</Text>
+        <Text style={styles.email}>{user?.email}</Text>
 
-        {/* Edit profile button */}
-        <Pressable style={styles.editButton}>
-          <Text style={styles.editButtonText}>edit profile</Text>
+        <Pressable style={styles.menuItem} onPress={() => navigation.navigate('TrackOrder')}>
+          <Text style={styles.menuLabel}>track order</Text>
+          <Text style={styles.chevron}>›</Text>
         </Pressable>
 
-        {/* Menu list */}
-        <View style={styles.menuList}>
-          {menuItems.map((item, index) => (
-            <Pressable
-              key={item.id}
-              style={[
-                styles.menuItem,
-                index === menuItems.length - 1 && styles.menuItemLast, // removes bottom border on the last item
-              ]}
-            >
-              <View style={styles.menuLeft}>
-                <Text style={styles.menuIcon}>{item.icon}</Text>
-                <Text style={styles.menuLabel}>{item.label}</Text>
-              </View>
-              <Text style={styles.chevron}>›</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        {/* Logout button — not wired to real auth logic yet */}
-        <Pressable style={styles.logoutButton}>
+        <Pressable style={styles.logoutButton} onPress={logout}>
           <Text style={styles.logoutText}>log out</Text>
         </Pressable>
       </ScrollView>
@@ -71,57 +117,34 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF', paddingTop: 56 },
   header: { fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 20, color: '#1A1A1A' },
-  scrollContent: { paddingHorizontal: 16, paddingBottom: 120 }, // clears the floating tab bar
-  userCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F1EFE8',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-  },
-  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#E5E2D8' },
-  userName: { fontSize: 16, fontWeight: '600', color: '#1A1A1A' },
-  userEmail: { fontSize: 13, color: '#5F5E5A', marginTop: 2 },
-  editButton: {
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: '#D9D6CC',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  editButtonText: { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
-  menuList: {
-    backgroundColor: '#F1EFE8',
-    borderRadius: 16,
-    marginBottom: 24,
-    overflow: 'hidden', // ensures children respect the rounded corners
-  },
+  scrollContent: { paddingHorizontal: 20, alignItems: 'center', paddingBottom: 120 },
+  avatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  avatarText: { fontSize: 20, fontWeight: '600', color: '#8A8778' },
+  name: { fontSize: 16, fontWeight: '600', color: '#1A1A1A' },
+  email: { fontSize: 13, color: '#8A8778', marginTop: 2, marginBottom: 24 },
   menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E2D8',
+    width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: '#F1EFE8', borderRadius: 14, padding: 16, marginBottom: 12,
   },
-  menuItemLast: {
-    borderBottomWidth: 0, // last item has no divider line beneath it
-  },
-  menuLeft: { flexDirection: 'row', alignItems: 'center' },
-  menuIcon: { fontSize: 16, marginRight: 12, width: 20, textAlign: 'center' },
   menuLabel: { fontSize: 14, color: '#1A1A1A' },
   chevron: { fontSize: 18, color: '#B0AEA4' },
   logoutButton: {
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: '#D9736A',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: '100%', height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#D9736A',
+    alignItems: 'center', justifyContent: 'center', marginTop: 12,
   },
-  logoutText: { fontSize: 15, fontWeight: '600', color: '#D9736A' },
+  logoutText: { fontSize: 14, fontWeight: '600', color: '#D9736A' },
+  // Auth form styles (logged-out state)
+  authBox: { paddingHorizontal: 24, paddingTop: 20 },
+  authTitle: { fontSize: 17, fontWeight: '600', color: '#1A1A1A', textAlign: 'center', marginBottom: 6 },
+  authSubtitle: { fontSize: 13, color: '#8A8778', textAlign: 'center', marginBottom: 24 },
+  input: {
+    backgroundColor: '#F1EFE8', borderRadius: 14, height: 48, paddingHorizontal: 16,
+    fontSize: 14, color: '#1A1A1A', marginBottom: 12,
+  },
+  primaryButton: {
+    backgroundColor: '#1A1A1A', height: 52, borderRadius: 26,
+    alignItems: 'center', justifyContent: 'center', marginTop: 8, marginBottom: 16,
+  },
+  primaryButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
+  switchText: { textAlign: 'center', fontSize: 13, color: '#C1622F' },
 });

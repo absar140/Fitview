@@ -39,24 +39,22 @@ export default function CategoriesScreen() {
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
           <Pressable
-            style={styles.banner}
-            onPress={() =>
-              navigation.navigate('CategoryListing', { categoryId: item.id, categoryLabel: item.label })
-            }
-          >
-            <ImageBackground
-              source={item.image}
-              style={styles.bannerImage}
-              imageStyle={styles.bannerImageRadius}
-            >
-              {/* Overlay stretches across the whole banner and centers its
-                  content, so the title sits in the middle instead of the
-                  bottom-left corner */}
-              <View style={styles.overlay}>
-                <Text style={styles.bannerLabel}>{item.label}</Text>
-              </View>
-            </ImageBackground>
-          </Pressable>
+  style={styles.banner}
+  onPress={() =>
+    navigation.navigate('CategoryListing', { categoryId: item.id, categoryLabel: item.label })
+  }
+>
+  <ImageBackground
+    source={item.image}
+    style={styles.bannerImage}
+    imageStyle={styles.bannerImageRadius}
+    resizeMode="cover" // ← crops the image to fill the box proportionally, instead of stretching it
+  >
+    <View style={styles.overlay}>
+      <Text style={styles.bannerLabel}>{item.label}</Text>
+    </View>
+  </ImageBackground>
+</Pressable>
         )}
       />
     </View>
@@ -77,10 +75,10 @@ const styles = StyleSheet.create({
   header: { fontSize: 17, fontWeight: '600', color: '#1A1A1A' },
   listContent: { paddingHorizontal: 16, paddingBottom: 120 },
   banner: {
-    height: 170,
+    height: 170, // kept the same as before — not reducing section size
     marginBottom: 16,
     borderRadius: 20,
-    overflow: 'hidden',
+    overflow: 'hidden', // clips the image to the rounded corners
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 8,
@@ -88,16 +86,15 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   bannerImage: {
-    flex: 1,
-    justifyContent: 'center',
+    width: '100%',
+    height: '100%', // explicitly fills the entire banner box
   },
   bannerImageRadius: {
     borderRadius: 20,
+    width: '100%',
+    height: '100%',
   },
   overlay: {
-    // Correct property name is 'absoluteFill' in this RN version's types.
-    // Stretches to cover the entire banner, then centers content
-    // both horizontally and vertically.
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.25)',
     alignItems: 'center',
