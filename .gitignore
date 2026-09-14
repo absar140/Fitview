@@ -73,3 +73,9 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+ 
+# Debug/crash logs from Gradle builds 
+android/*.log 
+android/build_error.txt 
+android/hs_err_pid*.log 
+android/replay_pid*.log 
