@@ -7,7 +7,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import HomeScreen from '../features/home/HomeScreen';
 import CategoriesScreen from '../features/categories/CategoriesScreen';
-import TryOnScreen from '../features/tryon/TryOnScreen';
+import TryOnScreen from '../features/TryOnScreen';
 import CartScreen from '../features/cart/CartScreen';
 import ProfileScreen from '../features/profile/ProfileScreen';
 import ProductDetailScreen from '../features/product/ProductDetailScreen';
