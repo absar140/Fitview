@@ -17,17 +17,20 @@
     "lucide-react-native": "^1.41.0",
     "react": "19.2.3",
     "react-native": "0.87.1",
-    "react-native-nitro-image": "^0.15.2",
-    "react-native-nitro-modules": "^0.37.1",
+    "react-native-mediapipe-posedetection": "^0.4.0",
     "react-native-safe-area-context": "^5.9.1",
     "react-native-screens": "^4.27.0",
     "react-native-svg": "^15.15.5",
     "react-native-vector-icons": "^10.3.0",
-    "react-native-vision-camera": "^5.2.3"
+    "react-native-vision-camera": "^4.7.3",
+    "react-native-worklets-core": "^1.6.3"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@babel/plugin-proposal-nullish-coalescing-operator": "^7.18.6",
+    "@babel/plugin-proposal-optional-chaining": "^7.21.0",
     "@babel/preset-env": "^7.25.3",
+    "@babel/preset-typescript": "^7.29.7",
     "@babel/runtime": "^7.25.0",
     "@react-native-community/cli": "20.2.0",
     "@react-native-community/cli-platform-android": "20.2.0",
