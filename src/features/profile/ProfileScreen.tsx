@@ -5,6 +5,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
 import { useAuth } from '../../store/AuthContext';
 
+
 type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function ProfileScreen() {
@@ -91,6 +92,7 @@ export default function ProfileScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.header}>profile</Text>
+```.
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.avatar}>

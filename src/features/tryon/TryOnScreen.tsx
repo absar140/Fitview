@@ -1,39 +1,111 @@
-import React, { useEffect, useRef , useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Linking, FlatList, Image } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  Linking,
+  FlatList,
+  Image,
+  Alert,
+  useWindowDimensions,
+  LayoutChangeEvent,
+} from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
 import { usePoseDetection, RunningMode, Delegate } from 'react-native-mediapipe-posedetection';
-import { useRoute, RouteProp } from '@react-navigation/native';
+import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
+import {
+  FilamentScene,
+  FilamentView,
+  Model,
+  Camera as FilamentCamera,
+  DefaultLight,
+} from 'react-native-filament';
+import type { Float3 } from 'react-native-filament';
+import { useSharedValue } from 'react-native-worklets-core';
 import { mockGarments } from '../../services/mockGarments';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
-import { Canvas, Image as SkiaImage, useImage } from '@shopify/react-native-skia';
 
 type RouteProps = RouteProp<RootStackParamList, 'TryOn'>;
 
-const DEBUG_LANDMARK_INDICES = [11, 12, 23, 24]; // leftShoulder, rightShoulder, leftHip, rightHip
+const CAMERA_Z = 3;
+const VERTICAL_FOV_DEG = 45;
+const SHIRT_WIDTH_FACTOR = 1.6;
+const TORSO_ANCHOR = 0.45;
+const UNIT_CUBE_SIZE = 2;
+const MODEL_BASE_ROTATION: Float3 = [0, 0, 0];
+const FLIP_X = false;
+const ROLL_SIGN = -1;
+const YAW_GAIN = 0;
+const ALPHA = 0.35;
+const MAX_MISSED_FRAMES = 5;
+const HIDDEN_TRANSLATE: Float3 = [0, 0, 100];
+
+const VISIBLE_HEIGHT_AT_ORIGIN = 2 * CAMERA_Z * Math.tan((VERTICAL_FOV_DEG * Math.PI) / 360);
+
+const GLB_ASSETS: Record<string, any> = {
+  g1: require('../../../assets/garments/shirt1.glb'),
+  g2: require('../../../assets/garments/shirt2.glb'),
+  g3: require('../../../assets/garments/shirt3.glb'),
+  g4: require('../../../assets/garments/shirt4.glb'),
+  g5: require('../../../assets/garments/shirt5.glb'),
+  g6: require('../../../assets/garments/shirt6.glb'),
+  g7: require('../../../assets/garments/shirt7.glb'),
+  g8: require('../../../assets/garments/shirt8.glb'),
+  g9: require('../../../assets/garments/shirt9.glb'),
+  g10: require('../../../assets/garments/shirt10.glb'),
+};
+
+const TRYON_GARMENTS = mockGarments.filter((g) => GLB_ASSETS[g.id]);
 
 export default function TryOnScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<'front' | 'back'>('front');
   const device = useCameraDevice(cameraPosition);
-  const maxExposure = device?.maxExposure ?? 0;
-     const format = useCameraFormat(device, [
-  { fps: 30 },
-  { photoHdr: true },
-]);
+
+  const format = useCameraFormat(device, [{ fps: 30 }, { photoHdr: true }]);
+
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   const route = useRoute<RouteProps>();
-  const [selectedGarmentId, setSelectedGarmentId] = useState(
-    route.params?.garmentId ?? mockGarments[0].id
+  const [selectedGarmentId, setSelectedGarmentId] = useState<string>(
+    route.params?.garmentId ?? TRYON_GARMENTS[0]?.id ?? 'g1'
   );
 
-  const [debugDots, setDebugDots] = useState<{ x: number; y: number }[]>([]);
-  const [isTracking, setIsTracking] = useState(false);
-  const smoothedRef = useRef<{ x: number; y: number }[]>([]);
-  const ALPHA = 0.35;
-  const shirtImage = useImage(require('../../../assets/garments/shirt.glb'));
+  const navigation = useNavigation();
+  const cameraRef = useRef<Camera>(null);
 
+  const window = useWindowDimensions();
+  const viewSize = useRef({ w: window.width, h: window.height });
+  const onContainerLayout = (e: LayoutChangeEvent) => {
+    viewSize.current = {
+      w: e.nativeEvent.layout.width,
+      h: e.nativeEvent.layout.height,
+    };
+  };
+
+  const translate = useSharedValue<Float3>(HIDDEN_TRANSLATE);
+  const scale = useSharedValue<Float3>([1, 1, 1]);
+  const rotate = useSharedValue<Float3>(MODEL_BASE_ROTATION);
+
+  const smoothed = useRef({ init: false, x: 0, y: 0, s: 1, roll: 0, yaw: 0 });
+  const missedFrames = useRef(0);
+  const trackingRef = useRef(false);
+  const [isTracking, setIsTracking] = useState(false);
+
+  const handleCapture = async () => {
+    if (!cameraRef.current) return;
+    try {
+      const photo = await cameraRef.current.takePhoto({
+        flash: cameraPosition === 'back' ? 'auto' : 'off',
+      });
+      console.log('Tasveer ban gayi:', photo.path);
+      Alert.alert('Photo Saved', photo.path);
+    } catch (e) {
+      console.error('Capture error:', e);
+    }
+  };
 
   useEffect(() => {
     if (!hasPermission) {
@@ -45,32 +117,92 @@ export default function TryOnScreen() {
 
   const poseDetection = usePoseDetection(
     {
-      // Correct shape: result.results is an array of pose bundles (one per
-      // frame-processing call), each containing .landmarks (per detected person).
-      // The second argument `vc` (ViewCoordinator) correctly converts normalized
-      // landmark coordinates into actual on-screen pixel positions, accounting
-      // for camera rotation/resize — more reliable than manual math.
       onResults: (result, vc) => {
         const poseResult = result.results[0];
-        if (poseResult && poseResult.landmarks.length > 0) {
-          setIsTracking(true);
-          const frameDims = vc.getFrameDims(result);
-          const points = DEBUG_LANDMARK_INDICES.map((index) => {
-  const landmark = poseResult.landmarks[0][index];
-  return vc.convertPoint(frameDims, { x: landmark.x, y: landmark.y });
-});
+        const lm = poseResult?.landmarks?.[0];
 
-const smoothed = points.map((p, i) => {
-  const prev = smoothedRef.current[i] ?? p;
-  return {
-    x: prev.x + ALPHA * (p.x - prev.x),
-    y: prev.y + ALPHA * (p.y - prev.y),
-  };
-});
-smoothedRef.current = smoothed;
-setDebugDots(smoothed);
+        if (lm && lm.length > 24) {
+          missedFrames.current = 0;
+          if (!trackingRef.current) {
+            trackingRef.current = true;
+            setIsTracking(true);
+          }
+
+          const frameDims = vc.getFrameDims(result);
+          const ls = lm[11];
+          const rs = lm[12];
+          const lh = lm[23];
+          const rh = lm[24];
+
+          let a = vc.convertPoint(frameDims, { x: ls.x, y: ls.y });
+          let b = vc.convertPoint(frameDims, { x: rs.x, y: rs.y });
+          let az = ls.z;
+          let bz = rs.z;
+          const lhPt = vc.convertPoint(frameDims, { x: lh.x, y: lh.y });
+          const rhPt = vc.convertPoint(frameDims, { x: rh.x, y: rh.y });
+
+          if (a.x > b.x) {
+            [a, b] = [b, a];
+            [az, bz] = [bz, az];
+          }
+
+          const { w, h } = viewSize.current;
+          const worldPerPx = VISIBLE_HEIGHT_AT_ORIGIN / h;
+
+          const shoulderMidX = (a.x + b.x) / 2;
+          const shoulderMidY = (a.y + b.y) / 2;
+          const hipMidX = (lhPt.x + rhPt.x) / 2;
+          const hipMidY = (lhPt.y + rhPt.y) / 2;
+          let cx = shoulderMidX + (hipMidX - shoulderMidX) * TORSO_ANCHOR;
+          const cy = shoulderMidY + (hipMidY - shoulderMidY) * TORSO_ANCHOR;
+          if (FLIP_X) cx = w - cx;
+
+          const targetX = (cx - w / 2) * worldPerPx;
+          const targetY = -(cy - h / 2) * worldPerPx;
+
+          const shoulderPx = Math.hypot(b.x - a.x, b.y - a.y);
+          const targetS = (shoulderPx * SHIRT_WIDTH_FACTOR * worldPerPx) / UNIT_CUBE_SIZE;
+
+          let roll = Math.atan2(b.y - a.y, b.x - a.x);
+          if (FLIP_X) roll = -roll;
+          const targetRoll = ROLL_SIGN * roll;
+
+          const dxNorm = Math.max(Math.abs(rs.x - ls.x), 1e-6);
+          const targetYaw = YAW_GAIN * Math.atan2(bz - az, dxNorm);
+
+          const st = smoothed.current;
+          if (!st.init) {
+            st.x = targetX;
+            st.y = targetY;
+            st.s = targetS;
+            st.roll = targetRoll;
+            st.yaw = targetYaw;
+            st.init = true;
+          } else {
+            st.x += ALPHA * (targetX - st.x);
+            st.y += ALPHA * (targetY - st.y);
+            st.s += ALPHA * (targetS - st.s);
+            st.roll += ALPHA * (targetRoll - st.roll);
+            st.yaw += ALPHA * (targetYaw - st.yaw);
+          }
+
+          translate.value = [st.x, st.y, 0];
+          scale.value = [st.s, st.s, st.s];
+          rotate.value = [
+            MODEL_BASE_ROTATION[0],
+            MODEL_BASE_ROTATION[1] + st.yaw,
+            MODEL_BASE_ROTATION[2] + st.roll,
+          ];
         } else {
-          setIsTracking(false);
+          missedFrames.current += 1;
+          if (missedFrames.current > MAX_MISSED_FRAMES) {
+            translate.value = HIDDEN_TRANSLATE;
+            smoothed.current.init = false;
+            if (trackingRef.current) {
+              trackingRef.current = false;
+              setIsTracking(false);
+            }
+          }
         }
       },
       onError: (error) => {
@@ -115,57 +247,44 @@ setDebugDots(smoothed);
   }
 
   return (
-    <View style={styles.container}>
-     <Camera
-  style={StyleSheet.absoluteFill}
-  device={device}
-    exposure={maxExposure} 
-   format={format}
-  fps={30}
-  isActive={true}
-  video={true}
-  audio={false}
-  pixelFormat="rgb"
-  resizeMode="cover"
-   torch="on"
-  lowLightBoost={device.supportsLowLightBoost}
-  frameProcessor={poseDetection.frameProcessor}
-  onLayout={poseDetection.cameraViewLayoutChangeHandler}
-  onError={(error) => setCameraError(error.message)}
-/>
-   <Canvas style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} pointerEvents="none">
-  {shirtImage && debugDots.length >= 2 && (() => {
-
-    const leftShoulder = debugDots[0]; // Index 11
-    const rightShoulder = debugDots[1]; // Index 12
-    const dx = rightShoulder.x - leftShoulder.x;
-    const dy = rightShoulder.y - leftShoulder.y;
-    const shoulderDistance = Math.sqrt(dx * dx + dy * dy);
-
-    const shirtWidth = shoulderDistance * 1.6;
-    const shirtHeight = shirtWidth * 1.2; 
-
-    const centerX = (leftShoulder.x + rightShoulder.x) / 2 - (shirtWidth / 2);
-    const centerY = ((leftShoulder.y + rightShoulder.y) / 2) - (shirtHeight / 4); 
-
-    return (
-      <SkiaImage
-        image={shirtImage}
-        x={centerX}
-        y={centerY}
-        width={shirtWidth}
-        height={shirtHeight}
+    <View style={styles.container} onLayout={onContainerLayout}>
+      <Camera
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        format={format}
+        fps={30}
+        isActive={true}
+        photo={true}
+        video={false}
+        audio={false}
+        pixelFormat="rgb"
+        resizeMode="cover"
+        lowLightBoost={device.supportsLowLightBoost}
+        frameProcessor={poseDetection.frameProcessor}
+        onLayout={poseDetection.cameraViewLayoutChangeHandler}
+        onError={(error) => setCameraError(error.message)}
       />
-    );
-  })()}
-</Canvas>
 
-      {debugDots.map((point, index) => (
-        <View key={index} style={[styles.debugDot, { left: point.x - 8, top: point.y - 8 }]} />
-      ))}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <FilamentScene>
+          <FilamentView style={styles.filament}>
+            <FilamentCamera cameraPosition={[0, 0, CAMERA_Z]} />
+            <DefaultLight />
+            <Model
+              key={selectedGarmentId}
+              source={GLB_ASSETS[selectedGarmentId] ?? GLB_ASSETS.g1}
+              transformToUnitCube
+              translate={translate}
+              scale={scale}
+              rotate={rotate}
+            />
+          </FilamentView>
+        </FilamentScene>
+      </View>
 
       <View style={styles.topBar}>
-        <Pressable style={styles.iconButton}>
+        <Pressable style={styles.iconButton} onPress={() => navigation.goBack()}>
           <Text style={styles.iconText}>‹</Text>
         </Pressable>
         <Pressable
@@ -190,7 +309,7 @@ setDebugDots(smoothed);
 
       <View style={styles.bottomArea}>
         <FlatList
-          data={mockGarments}
+          data={TRYON_GARMENTS}
           horizontal
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
@@ -208,7 +327,7 @@ setDebugDots(smoothed);
           )}
         />
         <View style={styles.captureRow}>
-          <Pressable style={styles.captureButton} />
+          <Pressable style={styles.captureButton} onPress={handleCapture} />
         </View>
       </View>
     </View>
@@ -217,11 +336,11 @@ setDebugDots(smoothed);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
+  filament: { flex: 1 },
   centered: { flex: 1, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', padding: 24 },
   message: { color: '#FFFFFF', fontSize: 14, textAlign: 'center', marginBottom: 20 },
   button: { backgroundColor: '#C1622F', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },
   buttonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
-  debugDot: { position: 'absolute', width: 16, height: 16, borderRadius: 8, backgroundColor: '#00FF00', borderWidth: 2, borderColor: '#FFFFFF' },
   topBar: { position: 'absolute', top: 50, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' },
   iconButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   iconText: { fontSize: 20, color: '#FFFFFF' },
