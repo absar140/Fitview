@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef , useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Linking, FlatList, Image } from 'react-native';
-import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
 import { usePoseDetection, RunningMode, Delegate } from 'react-native-mediapipe-posedetection';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { mockGarments } from '../../services/mockGarments';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
+import { Canvas, Image as SkiaImage, useImage } from '@shopify/react-native-skia';
 
 type RouteProps = RouteProp<RootStackParamList, 'TryOn'>;
 
@@ -14,6 +15,11 @@ export default function TryOnScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<'front' | 'back'>('front');
   const device = useCameraDevice(cameraPosition);
+  const maxExposure = device?.maxExposure ?? 0;
+     const format = useCameraFormat(device, [
+  { fps: 30 },
+  { photoHdr: true },
+]);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -24,6 +30,10 @@ export default function TryOnScreen() {
 
   const [debugDots, setDebugDots] = useState<{ x: number; y: number }[]>([]);
   const [isTracking, setIsTracking] = useState(false);
+  const smoothedRef = useRef<{ x: number; y: number }[]>([]);
+  const ALPHA = 0.35;
+  const shirtImage = useImage(require('../../../assets/garments/shirt.png'));
+
 
   useEffect(() => {
     if (!hasPermission) {
@@ -31,7 +41,7 @@ export default function TryOnScreen() {
         if (!granted) setPermissionDenied(true);
       });
     }
-  }, [hasPermission]);
+  }, [hasPermission, requestPermission]);
 
   const poseDetection = usePoseDetection(
     {
@@ -46,10 +56,19 @@ export default function TryOnScreen() {
           setIsTracking(true);
           const frameDims = vc.getFrameDims(result);
           const points = DEBUG_LANDMARK_INDICES.map((index) => {
-            const landmark = poseResult.landmarks[0][index];
-            return vc.convertPoint(frameDims, { x: landmark.x, y: landmark.y });
-          });
-          setDebugDots(points);
+  const landmark = poseResult.landmarks[0][index];
+  return vc.convertPoint(frameDims, { x: landmark.x, y: landmark.y });
+});
+
+const smoothed = points.map((p, i) => {
+  const prev = smoothedRef.current[i] ?? p;
+  return {
+    x: prev.x + ALPHA * (p.x - prev.x),
+    y: prev.y + ALPHA * (p.y - prev.y),
+  };
+});
+smoothedRef.current = smoothed;
+setDebugDots(smoothed);
         } else {
           setIsTracking(false);
         }
@@ -100,15 +119,46 @@ export default function TryOnScreen() {
      <Camera
   style={StyleSheet.absoluteFill}
   device={device}
+    exposure={maxExposure} 
+   format={format}
+  fps={30}
   isActive={true}
   video={true}
   audio={false}
   pixelFormat="rgb"
   resizeMode="cover"
+   torch="on"
+  lowLightBoost={device.supportsLowLightBoost}
   frameProcessor={poseDetection.frameProcessor}
   onLayout={poseDetection.cameraViewLayoutChangeHandler}
   onError={(error) => setCameraError(error.message)}
 />
+   <Canvas style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} pointerEvents="none">
+  {shirtImage && debugDots.length >= 2 && (() => {
+
+    const leftShoulder = debugDots[0]; // Index 11
+    const rightShoulder = debugDots[1]; // Index 12
+    const dx = rightShoulder.x - leftShoulder.x;
+    const dy = rightShoulder.y - leftShoulder.y;
+    const shoulderDistance = Math.sqrt(dx * dx + dy * dy);
+
+    const shirtWidth = shoulderDistance * 1.6;
+    const shirtHeight = shirtWidth * 1.2; 
+
+    const centerX = (leftShoulder.x + rightShoulder.x) / 2 - (shirtWidth / 2);
+    const centerY = ((leftShoulder.y + rightShoulder.y) / 2) - (shirtHeight / 4); 
+
+    return (
+      <SkiaImage
+        image={shirtImage}
+        x={centerX}
+        y={centerY}
+        width={shirtWidth}
+        height={shirtHeight}
+      />
+    );
+  })()}
+</Canvas>
 
       {debugDots.map((point, index) => (
         <View key={index} style={[styles.debugDot, { left: point.x - 8, top: point.y - 8 }]} />
