@@ -8,6 +8,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import HomeScreen from '../features/home/HomeScreen';
 import CategoriesScreen from '../features/categories/CategoriesScreen';
 import TryOnScreen from '../features/tryon/TryOnScreen';
+import FilamentTestScreen from '../features/tryon/FilamentTestScreen';
 import CartScreen from '../features/cart/CartScreen';
 import ProfileScreen from '../features/profile/ProfileScreen';
 import ProductDetailScreen from '../features/product/ProductDetailScreen';
@@ -26,11 +27,12 @@ export type TabParamList = {
   Profile: undefined;
 };
 
-// Removed "Login" from this type — it's no longer a stack-level route.
+
 export type RootStackParamList = {
   Tabs: undefined;
   ProductDetail: { garmentId: string };
   TryOn: { garmentId: string };
+  FilamentTest: undefined;        
   Checkout: undefined;
   OrderConfirmed: undefined;
   CategoryListing: { categoryId: string; categoryLabel: string };
@@ -127,9 +129,9 @@ export default function RootNavigator() {
         <Stack.Screen name="TryOn" component={TryOnScreen} />
         <Stack.Screen name="Checkout" component={CheckoutScreen} />
         <Stack.Screen name="OrderConfirmed" component={OrderConfirmedScreen} />
-        {/* @ts-ignore - known TS overload resolution issue with many Stack.Screen children; doesn't affect runtime */}
-<Stack.Screen name="CategoryListing" component={CategoryListingScreen} />
+        <Stack.Screen name="CategoryListing" component={CategoryListingScreen} />
         <Stack.Screen name="TrackOrder" component={TrackOrderScreen} />
+        <Stack.Screen component={FilamentTestScreen} name="FilamentTest"/>
       </Stack.Navigator>
     </NavigationContainer>
   );
