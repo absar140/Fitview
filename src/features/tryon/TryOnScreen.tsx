@@ -32,7 +32,7 @@ export default function TryOnScreen() {
   const [isTracking, setIsTracking] = useState(false);
   const smoothedRef = useRef<{ x: number; y: number }[]>([]);
   const ALPHA = 0.35;
-  const shirtImage = useImage(require('../../../assets/garments/shirt.png'));
+  const shirtImage = useImage(require('../../../assets/garments/shirt.glb'));
 
 
   useEffect(() => {
