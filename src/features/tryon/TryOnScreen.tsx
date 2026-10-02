@@ -43,19 +43,18 @@ const HIDDEN_TRANSLATE: Float3 = [0, 0, 100];
 
 const VISIBLE_HEIGHT_AT_ORIGIN = 2 * CAMERA_Z * Math.tan((VERTICAL_FOV_DEG * Math.PI) / 360);
 
-const GLB_ASSETS: Record<string, any> = {
-  g1: require('../../../assets/garments/shirt1.glb'),
-  g2: require('../../../assets/garments/shirt2.glb'),
-  g3: require('../../../assets/garments/shirt3.glb'),
-  g4: require('../../../assets/garments/shirt4.glb'),
-  g5: require('../../../assets/garments/shirt5.glb'),
-  g6: require('../../../assets/garments/shirt6.glb'),
-  g7: require('../../../assets/garments/shirt7.glb'),
-  g8: require('../../../assets/garments/shirt8.glb'),
-  g9: require('../../../assets/garments/shirt9.glb'),
-  g10: require('../../../assets/garments/shirt10.glb'),
+const GLB_ASSETS: Record<string, { source: any; widthFraction: number; shoulderFactor: number }> = {
+  '1': { source: require('../../../assets/garments/shirt1.glb'), widthFraction: 0.89, shoulderFactor: 1.5 },
+  '2': { source: require('../../../assets/garments/shirt2.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
+  '3': { source: require('../../../assets/garments/shirt3.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
+  '4': { source: require('../../../assets/garments/shirt4.glb'), widthFraction: 0.84, shoulderFactor: 1.5 },
+  '5': { source: require('../../../assets/garments/shirt5.glb'), widthFraction: 0.98, shoulderFactor: 1.5 },
+  '6': { source: require('../../../assets/garments/shirt6.glb'), widthFraction: 0.95, shoulderFactor: 1.5 },
+  '7': { source: require('../../../assets/garments/shirt7.glb'), widthFraction: 0.98, shoulderFactor: 1.5 },
+  '8': { source: require('../../../assets/garments/shirt8.glb'), widthFraction: 1.0, shoulderFactor: 2.5 }, 
+  '9': { source: require('../../../assets/garments/shirt9.glb'), widthFraction: 1.0, shoulderFactor: 2.5 }, 
+  '10': { source: require('../../../assets/garments/shirt10.glb'), widthFraction: 1.0, shoulderFactor: 1.5 }
 };
-
 const TRYON_GARMENTS = mockGarments.filter((g) => GLB_ASSETS[g.id]);
 
 export default function TryOnScreen() {
@@ -271,14 +270,14 @@ export default function TryOnScreen() {
           <FilamentView style={styles.filament}>
             <FilamentCamera cameraPosition={[0, 0, CAMERA_Z]} />
             <DefaultLight />
-            <Model
-              key={selectedGarmentId}
-              source={GLB_ASSETS[selectedGarmentId] ?? GLB_ASSETS.g1}
-              transformToUnitCube
-              translate={translate}
-              scale={scale}
-              rotate={rotate}
-            />
+            <Model 
+          key={selectedGarmentId}
+          source={GLB_ASSETS[selectedGarmentId]?.source ?? require('../../../assets/garments/shirt1.glb')} 
+          transformToUnitCube
+          translate={translate}
+          scale={scale}
+          rotate={rotate}
+        />
           </FilamentView>
         </FilamentScene>
       </View>
