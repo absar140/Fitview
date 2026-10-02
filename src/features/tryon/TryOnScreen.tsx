@@ -30,7 +30,6 @@ type RouteProps = RouteProp<RootStackParamList, 'TryOn'>;
 
 const CAMERA_Z = 3;
 const VERTICAL_FOV_DEG = 45;
-const SHIRT_WIDTH_FACTOR = 1.6;
 const TORSO_ANCHOR = 0.45;
 const UNIT_CUBE_SIZE = 2;
 const MODEL_BASE_ROTATION: Float3 = [0, 0, 0];
@@ -44,16 +43,16 @@ const HIDDEN_TRANSLATE: Float3 = [0, 0, 100];
 const VISIBLE_HEIGHT_AT_ORIGIN = 2 * CAMERA_Z * Math.tan((VERTICAL_FOV_DEG * Math.PI) / 360);
 
 const GLB_ASSETS: Record<string, { source: any; widthFraction: number; shoulderFactor: number }> = {
-  '1': { source: require('../../../assets/garments/shirt1.glb'), widthFraction: 0.89, shoulderFactor: 1.5 },
-  '2': { source: require('../../../assets/garments/shirt2.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
-  '3': { source: require('../../../assets/garments/shirt3.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
-  '4': { source: require('../../../assets/garments/shirt4.glb'), widthFraction: 0.84, shoulderFactor: 1.5 },
-  '5': { source: require('../../../assets/garments/shirt5.glb'), widthFraction: 0.98, shoulderFactor: 1.5 },
-  '6': { source: require('../../../assets/garments/shirt6.glb'), widthFraction: 0.95, shoulderFactor: 1.5 },
-  '7': { source: require('../../../assets/garments/shirt7.glb'), widthFraction: 0.98, shoulderFactor: 1.5 },
-  '8': { source: require('../../../assets/garments/shirt8.glb'), widthFraction: 1.0, shoulderFactor: 2.5 }, 
-  '9': { source: require('../../../assets/garments/shirt9.glb'), widthFraction: 1.0, shoulderFactor: 2.5 }, 
-  '10': { source: require('../../../assets/garments/shirt10.glb'), widthFraction: 1.0, shoulderFactor: 1.5 }
+  'g1': { source: require('../../../assets/garments/shirt1.glb'), widthFraction: 0.89, shoulderFactor: 1.5 },
+  'g2': { source: require('../../../assets/garments/shirt2.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
+  'g3': { source: require('../../../assets/garments/shirt3.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
+  'g4': { source: require('../../../assets/garments/shirt4.glb'), widthFraction: 0.84, shoulderFactor: 1.5 },
+  'g5': { source: require('../../../assets/garments/shirt5.glb'), widthFraction: 0.98, shoulderFactor: 1.5 },
+  'g6': { source: require('../../../assets/garments/shirt6.glb'), widthFraction: 0.95, shoulderFactor: 1.5 },
+  'g7': { source: require('../../../assets/garments/shirt7.glb'), widthFraction: 0.98, shoulderFactor: 1.5 },
+  'g8': { source: require('../../../assets/garments/shirt8.glb'), widthFraction: 1.0, shoulderFactor: 2.5 }, 
+  'g9': { source: require('../../../assets/garments/shirt9.glb'), widthFraction: 1.0, shoulderFactor: 2.5 }, 
+  'g10': { source: require('../../../assets/garments/shirt10.glb'), widthFraction: 1.0, shoulderFactor: 1.5 }
 };
 const TRYON_GARMENTS = mockGarments.filter((g) => GLB_ASSETS[g.id]);
 
@@ -71,6 +70,9 @@ export default function TryOnScreen() {
   const [selectedGarmentId, setSelectedGarmentId] = useState<string>(
     route.params?.garmentId ?? TRYON_GARMENTS[0]?.id ?? 'g1'
   );
+
+  const selectedGarmentIdRef = useRef(selectedGarmentId);
+  selectedGarmentIdRef.current = selectedGarmentId;
 
   const navigation = useNavigation();
   const cameraRef = useRef<Camera>(null);
@@ -160,8 +162,8 @@ export default function TryOnScreen() {
           const targetY = -(cy - h / 2) * worldPerPx;
 
           const shoulderPx = Math.hypot(b.x - a.x, b.y - a.y);
-          const targetS = (shoulderPx * SHIRT_WIDTH_FACTOR * worldPerPx) / UNIT_CUBE_SIZE;
-
+const fit = GLB_ASSETS[selectedGarmentIdRef.current] ?? GLB_ASSETS.g1;
+const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE * fit.widthFraction);
           let roll = Math.atan2(b.y - a.y, b.x - a.x);
           if (FLIP_X) roll = -roll;
           const targetRoll = ROLL_SIGN * roll;
