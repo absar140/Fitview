@@ -217,7 +217,7 @@ const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
-      delegate: Delegate.GPU,
+      delegate: Delegate.CPU,
     }
   );
 
