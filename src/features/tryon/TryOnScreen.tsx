@@ -10,10 +10,11 @@ import {
   Alert,
   useWindowDimensions,
   LayoutChangeEvent,
+  Platform,
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
 import { usePoseDetection, RunningMode, Delegate } from 'react-native-mediapipe-posedetection';
-import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
+import { useRoute, RouteProp, useNavigation, useIsFocused } from '@react-navigation/native';
 import {
   FilamentScene,
   FilamentView,
@@ -25,6 +26,7 @@ import type { Float3 } from 'react-native-filament';
 import { useSharedValue } from 'react-native-worklets-core';
 import { mockGarments } from '../../services/mockGarments';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
+import ViewShot from 'react-native-view-shot';
 
 type RouteProps = RouteProp<RootStackParamList, 'TryOn'>;
 
@@ -60,8 +62,12 @@ export default function TryOnScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<'front' | 'back'>('front');
   const device = useCameraDevice(cameraPosition);
-
-  const format = useCameraFormat(device, [{ fps: 30 }, { photoHdr: true }]);
+  
+  const format = useCameraFormat(device, [
+    { videoResolution: { width: 1280, height: 720 } },
+    { fps: 30 },
+  ]);
+  const isFocused = useIsFocused();
 
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -76,6 +82,7 @@ export default function TryOnScreen() {
 
   const navigation = useNavigation();
   const cameraRef = useRef<Camera>(null);
+  const viewShotRef = useRef<ViewShot>(null);
 
   const window = useWindowDimensions();
   const viewSize = useRef({ w: window.width, h: window.height });
@@ -96,13 +103,11 @@ export default function TryOnScreen() {
   const [isTracking, setIsTracking] = useState(false);
 
   const handleCapture = async () => {
-    if (!cameraRef.current) return;
+    if (!viewShotRef.current) return;
     try {
-      const photo = await cameraRef.current.takePhoto({
-        flash: cameraPosition === 'back' ? 'auto' : 'off',
-      });
-      console.log('Tasveer ban gayi:', photo.path);
-      Alert.alert('Photo Saved', photo.path);
+      const uri = await viewShotRef.current.capture();
+      console.log('Image created:', uri);
+      Alert.alert('Photo Saved', uri);
     } catch (e) {
       console.error('Capture error:', e);
     }
@@ -162,8 +167,8 @@ export default function TryOnScreen() {
           const targetY = -(cy - h / 2) * worldPerPx;
 
           const shoulderPx = Math.hypot(b.x - a.x, b.y - a.y);
-const fit = GLB_ASSETS[selectedGarmentIdRef.current] ?? GLB_ASSETS.g1;
-const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE * fit.widthFraction);
+          const fit = GLB_ASSETS[selectedGarmentIdRef.current] ?? GLB_ASSETS.g1;
+          const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE * fit.widthFraction);
           let roll = Math.atan2(b.y - a.y, b.x - a.x);
           if (FLIP_X) roll = -roll;
           const targetRoll = ROLL_SIGN * roll;
@@ -217,7 +222,8 @@ const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
-      delegate: Delegate.CPU,
+      delegate: Platform.OS === 'android' ? Delegate.GPU : Delegate.CPU,
+      fpsMode: 15,
     }
   );
 
@@ -249,40 +255,46 @@ const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE
 
   return (
     <View style={styles.container} onLayout={onContainerLayout}>
-      <Camera
-        ref={cameraRef}
+      <ViewShot 
+        ref={viewShotRef} 
+        options={{ format: 'jpg', quality: 0.9 }} 
         style={StyleSheet.absoluteFill}
-        device={device}
-        format={format}
-        fps={30}
-        isActive={true}
-        photo={true}
-        video={false}
-        audio={false}
-        pixelFormat="rgb"
-        resizeMode="cover"
-        lowLightBoost={device.supportsLowLightBoost}
-        frameProcessor={poseDetection.frameProcessor}
-        onLayout={poseDetection.cameraViewLayoutChangeHandler}
-        onError={(error) => setCameraError(error.message)}
-      />
-
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <FilamentScene>
-          <FilamentView style={styles.filament}>
-            <FilamentCamera cameraPosition={[0, 0, CAMERA_Z]} />
-            <DefaultLight />
-            <Model 
-          key={selectedGarmentId}
-          source={GLB_ASSETS[selectedGarmentId]?.source ?? require('../../../assets/garments/shirt1.glb')} 
-          transformToUnitCube
-          translate={translate}
-          scale={scale}
-          rotate={rotate}
+      >
+        <Camera
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          format={format}
+          fps={15}
+          isActive={isFocused}
+          photo={false}       
+          video={false}
+          audio={false}
+          pixelFormat="yuv"   
+          resizeMode="cover"
+          lowLightBoost={device.supportsLowLightBoost}
+          frameProcessor={poseDetection.frameProcessor}
+          onLayout={poseDetection.cameraViewLayoutChangeHandler}
+          onError={(error) => setCameraError(error.message)}
         />
-          </FilamentView>
-        </FilamentScene>
-      </View>
+
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <FilamentScene>
+            <FilamentView style={styles.filament}>
+              <FilamentCamera cameraPosition={[0, 0, CAMERA_Z]} />
+              <DefaultLight />
+              <Model 
+                key={selectedGarmentId}
+                source={GLB_ASSETS[selectedGarmentId]?.source ?? require('../../../assets/garments/shirt1.glb')} 
+                transformToUnitCube
+                translate={translate}
+                scale={scale}
+                rotate={rotate}
+              />
+            </FilamentView>
+          </FilamentScene>
+        </View>
+      </ViewShot>
 
       <View style={styles.topBar}>
         <Pressable style={styles.iconButton} onPress={() => navigation.goBack()}>
