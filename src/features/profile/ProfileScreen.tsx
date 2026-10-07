@@ -108,6 +108,10 @@ export default function ProfileScreen() {
           <Text style={styles.chevron}>›</Text>
         </Pressable>
 
+          <Pressable style={styles.menuItem} onPress={() => navigation.navigate('PoseDebug')}>
+  <Text style={styles.menuLabel}>pose debug</Text>
+  <Text style={styles.chevron}>›</Text>
+</Pressable>
         <Pressable style={styles.logoutButton} onPress={logout}>
           <Text style={styles.logoutText}>log out</Text>
         </Pressable>
