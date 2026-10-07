@@ -113,6 +113,7 @@ export default function TryOnScreen() {
     }
   };
 
+  
   useEffect(() => {
     if (!hasPermission) {
       requestPermission().then((granted) => {
