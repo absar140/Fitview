@@ -82,7 +82,7 @@ export default function TryOnScreen() {
 
   const navigation = useNavigation();
   const cameraRef = useRef<Camera>(null);
-  const viewShotRef = useRef<ViewShot>(null);
+  const viewShotRef = useRef<any>(null);
 
   const window = useWindowDimensions();
   const viewSize = useRef({ w: window.width, h: window.height });
@@ -319,6 +319,7 @@ export default function TryOnScreen() {
           <Text style={styles.errorText}>{cameraError}</Text>
         </View>
       )}
+
 
       <View style={styles.bottomArea}>
         <FlatList
