@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  View,
+import {View,
   Text,
   StyleSheet,
   Pressable,
