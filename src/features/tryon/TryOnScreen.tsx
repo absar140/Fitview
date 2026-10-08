@@ -271,7 +271,7 @@ export default function TryOnScreen() {
           photo={false}       
           video={false}
           audio={false}
-          pixelFormat="yuv"   
+          pixelFormat="rgb"  
           resizeMode="cover"
           lowLightBoost={device.supportsLowLightBoost}
           frameProcessor={poseDetection.frameProcessor}
