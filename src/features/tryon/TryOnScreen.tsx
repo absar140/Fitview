@@ -42,6 +42,11 @@ const ALPHA = 0.35;
 const MAX_MISSED_FRAMES = 5;
 const HIDDEN_TRANSLATE: Float3 = [0, 0, 100];
 
+// ---- DEBUG (testing only; set both to false when done) ----
+const DEBUG = true; // shows a status box on screen
+const FORCE_SHOW_MODEL = true; // shows the shirt in the middle even without pose, to test 3D alone
+const USE_GPU_DELEGATE = false; // GPU delegate fails on many phones; CPU is safer
+
 const VISIBLE_HEIGHT_AT_ORIGIN = 2 * CAMERA_Z * Math.tan((VERTICAL_FOV_DEG * Math.PI) / 360);
 
 const GLB_ASSETS: Record<string, { source: any; widthFraction: number; shoulderFactor: number }> = {
@@ -93,7 +98,17 @@ export default function TryOnScreen() {
     };
   };
 
-  const translate = useSharedValue<Float3>(HIDDEN_TRANSLATE);
+  const translate = useSharedValue<Float3>(FORCE_SHOW_MODEL ? [0, 0, 0] : HIDDEN_TRANSLATE);
+  const dbgRef = useRef({ results: 0, withPose: 0, lmCount: 0, err: '' });
+  const [dbgText, setDbgText] = useState('waiting for pose results...');
+  useEffect(() => {
+    if (!DEBUG) return;
+    const id = setInterval(() => {
+      const d = dbgRef.current;
+      setDbgText(`results: ${d.results}\nwith pose: ${d.withPose}\nlandmarks: ${d.lmCount}\nerr: ${d.err || '-'}`);
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
   const scale = useSharedValue<Float3>([1, 1, 1]);
   const rotate = useSharedValue<Float3>(MODEL_BASE_ROTATION);
 
@@ -125,9 +140,14 @@ export default function TryOnScreen() {
   const poseDetection = usePoseDetection(
     {
       onResults: (result, vc) => {
+        dbgRef.current.results += 1;
         const poseResult = result.results[0];
         const lm = poseResult?.landmarks?.[0];
 
+        if (lm) {
+          dbgRef.current.withPose += 1;
+          dbgRef.current.lmCount = lm.length;
+        }
         if (lm && lm.length > 24) {
           missedFrames.current = 0;
           if (!trackingRef.current) {
@@ -203,7 +223,7 @@ export default function TryOnScreen() {
         } else {
           missedFrames.current += 1;
           if (missedFrames.current > MAX_MISSED_FRAMES) {
-            translate.value = HIDDEN_TRANSLATE;
+            if (!FORCE_SHOW_MODEL) translate.value = HIDDEN_TRANSLATE;
             smoothed.current.init = false;
             if (trackingRef.current) {
               trackingRef.current = false;
@@ -214,6 +234,7 @@ export default function TryOnScreen() {
       },
       onError: (error) => {
         console.log('Pose detection error:', error.message);
+        dbgRef.current.err = String(error.message).slice(0, 120);
       },
     },
     RunningMode.LIVE_STREAM,
@@ -223,7 +244,7 @@ export default function TryOnScreen() {
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
-      delegate: Platform.OS === 'android' ? Delegate.GPU : Delegate.CPU,
+      delegate: Platform.OS === 'android' && USE_GPU_DELEGATE ? Delegate.GPU : Delegate.CPU,
       fpsMode: 15,
     }
   );
@@ -308,6 +329,12 @@ export default function TryOnScreen() {
           <Text style={styles.iconText}>⟳</Text>
         </Pressable>
       </View>
+
+      {DEBUG && (
+        <View style={{ position: 'absolute', top: 100, left: 12, backgroundColor: 'rgba(0,0,0,0.65)', padding: 8, borderRadius: 8 }} pointerEvents="none">
+          <Text style={{ color: '#0f0', fontSize: 12 }}>{dbgText}</Text>
+        </View>
+      )}
 
       {!isTracking && (
         <View style={styles.trackingPill}>
