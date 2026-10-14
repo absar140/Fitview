@@ -1,0 +1,27 @@
+// Fitview holdout ("punch-out") material.
+// Wherever this geometry is in FRONT of the garment, it overwrites the pixel with fully transparent
+// (0,0,0,0), so the live camera (the real arm/hand) shows through the transparent FilamentView.
+// Custom blending puts it in Filament's blended pass, i.e. drawn AFTER the opaque garment, so the
+// result does not depend on draw order. depthCulling keeps it from punching through when the arm is
+// BEHIND the garment.
+material {
+    name : fitview_holdout,
+    shadingModel : unlit,
+    blending : custom,
+    blendFunction : {
+        srcRGB : zero,
+        srcA : zero,
+        dstRGB : zero,
+        dstA : zero
+    },
+    depthWrite : false,
+    depthCulling : true,
+    culling : none
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = vec4(0.0);
+    }
+}

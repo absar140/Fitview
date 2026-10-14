@@ -9,12 +9,10 @@ import {
   Image,
   Alert,
   AppState,
-  useWindowDimensions,
-  LayoutChangeEvent,
-  Platform,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Camera, useCameraDevice, useCameraFormat, useCameraPermission } from 'react-native-vision-camera';
-import { usePoseDetection, RunningMode, Delegate } from 'react-native-mediapipe-posedetection';
 import { useRoute, RouteProp, useNavigation, useIsFocused } from '@react-navigation/native';
 import {
   FilamentScene,
@@ -27,37 +25,36 @@ import {
 } from 'react-native-filament';
 import type { Float3 } from 'react-native-filament';
 import { useSharedValue } from 'react-native-worklets-core';
-import type { ISharedValue } from 'react-native-worklets-core';
 import { mockGarments } from '../../services/mockGarments';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
 import ViewShot from 'react-native-view-shot';
+import { usePoseTracking } from './cv/usePoseTracking';
+import type { PoseShared, PoseStats } from './cv/usePoseTracking';
+import { OCC_EMPTY } from './cv/usePoseTracking';
+import { ArmOccluders } from './rendering/ArmOccluders';
 
 type RouteProps = RouteProp<RootStackParamList, 'TryOn'>;
-type PoseCallbacks = Parameters<typeof usePoseDetection>[0];
-type PoseOptions = Parameters<typeof usePoseDetection>[3];
 
 const CAMERA_Z = 3;
 const FILAMENT_CAMERA_POSITION: Float3 = [0, 0, CAMERA_Z];
-const VERTICAL_FOV_DEG = 45;
-const TORSO_ANCHOR = 0.45;
-const UNIT_CUBE_SIZE = 2;
-const FLIP_X = false;
-const ROLL_SIGN = -1;
-const YAW_GAIN = 0;
-const ALPHA = 0.35;
-const MAX_MISSED_FRAMES = 5;
 const HIDDEN_Z = 100; // pushes the model behind the Filament camera (= invisible)
+const GLIDE_SECONDS = 0.12; // render-thread smoothing between pose updates (bigger = softer, more lag)
 
 // ---- DEBUG (testing only; set both to false when done) ----
 const DEBUG = true; // shows a status box on screen
-const FORCE_SHOW_MODEL = true; // shows the shirt in the middle even without pose, to test 3D alone
-const USE_GPU_DELEGATE = false; // GPU delegate fails on many phones; CPU is safer
-
-const VISIBLE_HEIGHT_AT_ORIGIN = 2 * CAMERA_Z * Math.tan((VERTICAL_FOV_DEG * Math.PI) / 360);
+const FORCE_SHOW_MODEL = false; // true = keep the shirt in the middle without a pose (3D-only testing)
+const OCCLUSION = true; // Phase 4b: forearms/hands in front of the shirt cut through it
 
 // NOTE: shirt3.glb was removed from this list. It REQUIRES the glTF extension EXT_texture_webp
 // (WebP textures), which Filament's glTF loader cannot decode. 
-const GLB_ASSETS: Record<string, { source: any; widthFraction: number; shoulderFactor: number }> = {
+// Per-garment fit (spec §6 "anchor profile"):
+//   widthFraction   – how much of the model's width is the shoulder-to-shoulder part
+//   shoulderFactor  – garment shoulder width relative to the body's shoulder width
+//   topAboveShoulder – how far the top of the model (collar) sits ABOVE the shoulder line,
+//                      in body shoulder widths (bigger = garment moves down). Default below.
+const DEFAULT_TOP_ABOVE_SHOULDER = 0.22;
+type GarmentFitConfig = { source: any; widthFraction: number; shoulderFactor: number; topAboveShoulder?: number };
+const GLB_ASSETS: Record<string, GarmentFitConfig> = {
   g1: { source: require('../../../assets/garments/shirt1.glb'), widthFraction: 0.89, shoulderFactor: 1.5 },
   g2: { source: require('../../../assets/garments/shirt2.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
   // g3: { source: require('../../../assets/garments/shirt3.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
@@ -70,26 +67,6 @@ const GLB_ASSETS: Record<string, { source: any; widthFraction: number; shoulderF
   g10: { source: require('../../../assets/garments/shirt10.glb'), widthFraction: 1.0, shoulderFactor: 1.5 },
 };
 const TRYON_GARMENTS = mockGarments.filter((g) => GLB_ASSETS[g.id]);
-
-// Module-level constant -> same object every render, so usePoseDetection doesn't rebuild things.
-const POSE_OPTIONS: PoseOptions = {
-  numPoses: 1,
-  minPoseDetectionConfidence: 0.5,
-  minPosePresenceConfidence: 0.5,
-  minTrackingConfidence: 0.5,
-  delegate: Platform.OS === 'android' && USE_GPU_DELEGATE ? Delegate.GPU : Delegate.CPU,
-  fpsMode: 15,
-};
-
-/** Pose -> 3D bridge. Written on the JS thread (pose results), read on the Filament render thread. */
-type PoseShared = {
-  x: ISharedValue<number>;
-  y: ISharedValue<number>;
-  s: ISharedValue<number>;
-  roll: ISharedValue<number>;
-  yaw: ISharedValue<number>;
-  visible: ISharedValue<number>; // 1 = show, 0 = hide
-};
 
 function useAppIsActive() {
   const [active, setActive] = useState(AppState.currentState === 'active');
@@ -149,23 +126,15 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   const [selectedGarmentId, setSelectedGarmentId] = useState<string>(initialGarmentId);
-  const selectedGarmentIdRef = useRef(selectedGarmentId);
-  selectedGarmentIdRef.current = selectedGarmentId;
 
   const navigation = useNavigation();
   const viewShotRef = useRef<any>(null);
 
-  const window = useWindowDimensions();
-  const viewSize = useRef({ w: window.width, h: window.height });
-  const onContainerLayout = (e: LayoutChangeEvent) => {
-    viewSize.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height };
-  };
-
-  // Plain numbers in shared values (no arrays): written here on the JS thread, consumed by the
-  // Filament render callback on the Filament thread.
+  // Plain numbers in shared values: written on the frame-processor thread (usePoseTracking),
+  // consumed by the Filament render callback on the Filament thread.
   const poseX = useSharedValue(0);
   const poseY = useSharedValue(0);
-  const poseS = useSharedValue(1);
+  const poseS = useSharedValue(0.5); // FORCE_SHOW size before any pose (1 = fills the screen)
   const poseRoll = useSharedValue(0);
   const poseYaw = useSharedValue(0);
   const poseVisible = useSharedValue(FORCE_SHOW_MODEL ? 1 : 0);
@@ -174,149 +143,41 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
     [poseX, poseY, poseS, poseRoll, poseYaw, poseVisible]
   );
 
-  const dbgRef = useRef({ results: 0, withPose: 0, lmCount: 0, err: '' });
-  const smoothed = useRef({ init: false, x: 0, y: 0, s: 1, roll: 0, yaw: 0 });
-  const missedFrames = useRef(0);
-  const trackingRef = useRef(false);
+  const occluders = useSharedValue<number[]>(OCC_EMPTY);
   const [isTracking, setIsTracking] = useState(false);
 
+  // Phase 8: capture = camera + rendered garment in ONE image (spec §16 / Definition of Done).
+  // handleGLSurfaceViewOnAndroid makes view-shot PixelCopy the camera's SurfaceView; the Filament
+  // TextureView on top is captured as well, in the same order as on screen.
+  const [captureUri, setCaptureUri] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
   const handleCapture = async () => {
-    if (!viewShotRef.current) return;
+    if (!viewShotRef.current || capturing) return;
+    setCapturing(true);
     try {
       const uri = await viewShotRef.current.capture();
-      console.log('Image created:', uri);
-      Alert.alert('Photo Saved', uri);
+      setCaptureUri(uri);
     } catch (e) {
       console.error('Capture error:', e);
+      Alert.alert('Capture failed', String(e));
+    } finally {
+      setCapturing(false);
     }
   };
 
-  const onResultsImpl: PoseCallbacks['onResults'] = (result, vc) => {
-    dbgRef.current.results += 1;
-    const lm = result.results[0]?.landmarks?.[0];
+  const onTrackingChange = useCallback((t: boolean) => setIsTracking(t), []);
+  const fit = GLB_ASSETS[selectedGarmentId] ?? GLB_ASSETS.g1;
 
-    if (lm) {
-      dbgRef.current.withPose += 1;
-      dbgRef.current.lmCount = lm.length;
-    }
-    if (lm && lm.length > 24) {
-      missedFrames.current = 0;
-      if (!trackingRef.current) {
-        trackingRef.current = true;
-        setIsTracking(true);
-      }
-
-      const frameDims = vc.getFrameDims(result);
-      const ls = lm[11];
-      const rs = lm[12];
-      const lh = lm[23];
-      const rh = lm[24];
-
-      let a = vc.convertPoint(frameDims, { x: ls.x, y: ls.y });
-      let b = vc.convertPoint(frameDims, { x: rs.x, y: rs.y });
-      let az = ls.z;
-      let bz = rs.z;
-      const lhPt = vc.convertPoint(frameDims, { x: lh.x, y: lh.y });
-      const rhPt = vc.convertPoint(frameDims, { x: rh.x, y: rh.y });
-
-      if (a.x > b.x) {
-        const t = a;
-        a = b;
-        b = t;
-        const tz = az;
-        az = bz;
-        bz = tz;
-      }
-
-      const { w, h } = viewSize.current;
-      const worldPerPx = VISIBLE_HEIGHT_AT_ORIGIN / h;
-
-      const shoulderMidX = (a.x + b.x) / 2;
-      const shoulderMidY = (a.y + b.y) / 2;
-      const hipMidX = (lhPt.x + rhPt.x) / 2;
-      const hipMidY = (lhPt.y + rhPt.y) / 2;
-      let cx = shoulderMidX + (hipMidX - shoulderMidX) * TORSO_ANCHOR;
-      const cy = shoulderMidY + (hipMidY - shoulderMidY) * TORSO_ANCHOR;
-      if (FLIP_X) cx = w - cx;
-
-      const targetX = (cx - w / 2) * worldPerPx;
-      const targetY = -(cy - h / 2) * worldPerPx;
-
-      const shoulderPx = Math.hypot(b.x - a.x, b.y - a.y);
-      const fit = GLB_ASSETS[selectedGarmentIdRef.current] ?? GLB_ASSETS.g1;
-      // Size relative to the unit cube (the 2/maxExtent normalisation is applied in GarmentModel).
-      const targetS = (shoulderPx * fit.shoulderFactor * worldPerPx) / (UNIT_CUBE_SIZE * fit.widthFraction);
-      let roll = Math.atan2(b.y - a.y, b.x - a.x);
-      if (FLIP_X) roll = -roll;
-      const targetRoll = ROLL_SIGN * roll;
-
-      const dxNorm = Math.max(Math.abs(rs.x - ls.x), 1e-6);
-      const targetYaw = YAW_GAIN * Math.atan2(bz - az, dxNorm);
-
-      const st = smoothed.current;
-      if (!st.init) {
-        st.x = targetX;
-        st.y = targetY;
-        st.s = targetS;
-        st.roll = targetRoll;
-        st.yaw = targetYaw;
-        st.init = true;
-      } else {
-        st.x += ALPHA * (targetX - st.x);
-        st.y += ALPHA * (targetY - st.y);
-        st.s += ALPHA * (targetS - st.s);
-        st.roll += ALPHA * (targetRoll - st.roll);
-        st.yaw += ALPHA * (targetYaw - st.yaw);
-      }
-
-      poseX.value = st.x;
-      poseY.value = st.y;
-      poseS.value = st.s;
-      poseRoll.value = st.roll;
-      poseYaw.value = st.yaw;
-      poseVisible.value = 1;
-    } else {
-      missedFrames.current += 1;
-      if (missedFrames.current > MAX_MISSED_FRAMES) {
-        if (!FORCE_SHOW_MODEL) poseVisible.value = 0;
-        smoothed.current.init = false;
-        if (trackingRef.current) {
-          trackingRef.current = false;
-          setIsTracking(false);
-        }
-      }
-    }
-  };
-
-  const onErrorImpl: PoseCallbacks['onError'] = (error) => {
-    console.log('Pose detection error:', error.message);
-    dbgRef.current.err = String(error.message).slice(0, 120);
-  };
-
-  // Keep the callbacks we hand to usePoseDetection referentially STABLE. Before, a new onResults
-  // on every render rebuilt the library's detector map + frame processor on every re-render
-  // (the debug box re-rendered every 500 ms), constantly re-installing the camera frame processor.
-  const handlersRef = useRef({ onResults: onResultsImpl, onError: onErrorImpl });
-  handlersRef.current = { onResults: onResultsImpl, onError: onErrorImpl };
-  const poseCallbacks = useMemo<PoseCallbacks>(
-    () => ({
-      onResults: (r, vc) => handlersRef.current.onResults(r, vc),
-      onError: (e) => handlersRef.current.onError(e),
-    }),
-    []
-  );
-
-  const poseDetection = usePoseDetection(poseCallbacks, RunningMode.LIVE_STREAM, 'pose_landmarker_lite.task', POSE_OPTIONS);
-
-  // The library needs to know which camera is used, otherwise the front camera is NOT treated as
-  // mirrored and the X coordinates of the landmarks come out flipped. (MediapipeCamera does this
-  // internally; we use the raw VisionCamera <Camera>, so we must do it ourselves.)
-  const deviceChangeRef = useRef(poseDetection.cameraDeviceChangeHandler);
-  deviceChangeRef.current = poseDetection.cameraDeviceChangeHandler;
-  useEffect(() => {
-    if (device) deviceChangeRef.current(device);
-    smoothed.current.init = false;
-  }, [device]);
+  // Phase 3: pose + smoothing + garment maths run on the camera's frame-processor thread.
+  // JS only receives "tracking started / lost".
+  const tracker = usePoseTracking({
+    pose,
+    mirror: cameraPosition === 'front',
+    fit,
+    forceShow: FORCE_SHOW_MODEL,
+    onTrackingChange,
+    occluders: OCCLUSION ? occluders : undefined,
+  });
 
   if (device == null) {
     return (
@@ -329,8 +190,12 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
   const garmentSource = GLB_ASSETS[selectedGarmentId]?.source ?? GLB_ASSETS.g1.source;
 
   return (
-    <View style={styles.container} onLayout={onContainerLayout}>
-      <ViewShot ref={viewShotRef} options={{ format: 'jpg', quality: 0.9 }} style={StyleSheet.absoluteFill}>
+    <View style={styles.container} onLayout={tracker.onLayout}>
+      <ViewShot
+        ref={viewShotRef}
+        options={{ format: 'jpg', quality: 0.9, result: 'tmpfile', handleGLSurfaceViewOnAndroid: true }}
+        style={StyleSheet.absoluteFill}
+      >
         <Camera
           style={StyleSheet.absoluteFill}
           device={device}
@@ -340,11 +205,9 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
           photo={false}
           video={false}
           audio={false}
-          pixelFormat="rgb" // MediaPipe needs RGBA_8888 frames on Android
-          resizeMode="cover"
-          frameProcessor={poseDetection.frameProcessor}
-          onLayout={poseDetection.cameraViewLayoutChangeHandler}
-          onOutputOrientationChanged={poseDetection.cameraOrientationChangedHandler}
+          pixelFormat="rgb" // the fitviewPose plugin needs RGBA_8888 frames
+          resizeMode="cover" // usePoseTracking maps landmarks assuming "cover"
+          frameProcessor={tracker.frameProcessor}
           onError={(error) => setCameraError(error.message)}
         />
 
@@ -354,7 +217,8 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
               <FilamentCamera cameraPosition={FILAMENT_CAMERA_POSITION} />
               <DefaultLight />
               {/* key -> a garment switch only reloads the model, the FilamentView/swapchain stays */}
-              <GarmentModel key={selectedGarmentId} source={garmentSource} pose={pose} />
+              <GarmentModel key={selectedGarmentId} source={garmentSource} pose={pose} fit={fit} />
+              {OCCLUSION && <ArmOccluders occluders={occluders} />}
             </FilamentView>
           </FilamentScene>
         </View>
@@ -364,15 +228,29 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
         <Pressable style={styles.iconButton} onPress={() => navigation.goBack()}>
           <Text style={styles.iconText}>‹</Text>
         </Pressable>
-        <Pressable
-          style={styles.iconButton}
-          onPress={() => setCameraPosition((prev) => (prev === 'front' ? 'back' : 'front'))}
-        >
-          <Text style={styles.iconText}>⟳</Text>
-        </Pressable>
+        <View style={styles.topBarRight}>
+          {DEBUG && (
+            // Phase 3 debug: skeleton overlay from the same on-device pose plugin
+            <Pressable style={styles.iconButton} onPress={() => navigation.navigate('PoseDebug' as never)}>
+              <Text style={styles.debugBtnText}>POSE</Text>
+            </Pressable>
+          )}
+          {DEBUG && (
+            // Phase 4 debug: opens the segmentation (body mask) debug screen
+            <Pressable style={styles.iconButton} onPress={() => navigation.navigate('SegmentationDebug' as never)}>
+              <Text style={styles.debugBtnText}>MASK</Text>
+            </Pressable>
+          )}
+          <Pressable
+            style={styles.iconButton}
+            onPress={() => setCameraPosition((prev) => (prev === 'front' ? 'back' : 'front'))}
+          >
+            <Text style={styles.iconText}>⟳</Text>
+          </Pressable>
+        </View>
       </View>
 
-      {DEBUG && <DebugBox dbgRef={dbgRef} />}
+      {DEBUG && <DebugBox stats={tracker.stats} pluginOk={tracker.pluginAvailable} />}
 
       {!isTracking && (
         <View style={styles.trackingPill}>
@@ -403,9 +281,23 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
           )}
         />
         <View style={styles.captureRow}>
-          <Pressable style={styles.captureButton} onPress={handleCapture} />
+          <Pressable style={styles.captureButton} onPress={handleCapture} disabled={capturing}>
+            {capturing && <ActivityIndicator color="#1A1A1A" style={styles.captureSpinner} />}
+          </Pressable>
         </View>
       </View>
+
+      {/* Captured result. The camera keeps running underneath (no restart). */}
+      <Modal visible={captureUri != null} animationType="fade" onRequestClose={() => setCaptureUri(null)}>
+        <View style={styles.previewContainer}>
+          {captureUri != null && <Image source={{ uri: captureUri }} style={styles.previewImage} resizeMode="contain" />}
+          <View style={styles.previewBar}>
+            <Pressable style={styles.previewBtn} onPress={() => setCaptureUri(null)}>
+              <Text style={styles.previewBtnText}>Retake</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -423,7 +315,7 @@ function TryOnSession({ initialGarmentId }: { initialGarmentId: string }) {
  *    Filament transforms were changed from the JS thread while the render thread was drawing.
  * Here we rebuild the full transform from scratch every frame: T(pos) * Rz * Ry * S * T(-center).
  */
-function GarmentModel({ source, pose }: { source: any; pose: PoseShared }) {
+function GarmentModel({ source, pose, fit }: { source: any; pose: PoseShared; fit: GarmentFitConfig }) {
   const { transformManager } = useFilamentContext();
   const model = useModel(source);
 
@@ -436,6 +328,10 @@ function GarmentModel({ source, pose }: { source: any; pose: PoseShared }) {
   const cZ = bbox ? bbox.center[2] : 0;
   const maxHalf = bbox ? Math.max(bbox.halfExtent[0], bbox.halfExtent[1], bbox.halfExtent[2]) : 1;
   const unitScale = maxHalf > 0 ? 1 / maxHalf : 1;
+  const halfHeightUnit = bbox ? bbox.halfExtent[1] * unitScale : 1; // model half-height at scale 1
+  const widthFraction = fit.widthFraction;
+  const shoulderFactor = fit.shoulderFactor;
+  const topAbove = fit.topAboveShoulder ?? DEFAULT_TOP_ABOVE_SHOULDER;
 
   const px = pose.x;
   const py = pose.y;
@@ -443,33 +339,67 @@ function GarmentModel({ source, pose }: { source: any; pose: PoseShared }) {
   const proll = pose.roll;
   const pyaw = pose.yaw;
   const pvisible = pose.visible;
+  // What is actually drawn: [initialised, x, y, scale, roll, yaw]. Pose only updates a few times a
+  // second on slow phones; the render loop (60 fps) glides towards the latest pose instead of
+  // jumping, so the garment moves continuously.
+  const shown = useSharedValue<number[]>([0, 0, 0, 1, 0, 0]);
 
-  RenderCallbackContext.useRenderCallback(() => {
+  RenderCallbackContext.useRenderCallback((frameInfo) => {
     'worklet';
     if (rootEntity == null) return;
 
     // NOTE: no array/object destructuring inside worklets (Babel turns it into helper functions
     // that the worklet runtime can't capture).
-    const s = ps.value * unitScale;
-    const z = pvisible.value > 0.5 ? 0 : HIDDEN_Z;
+    const visible = pvisible.value > 0.5;
+    const cur = shown.value;
+    let dt = frameInfo.timeSinceLastFrame;
+    if (!(dt > 0) || dt > 0.25) dt = 1 / 60;
+    // fraction of the remaining distance covered this frame (time constant GLIDE_SECONDS)
+    const k = cur[0] < 0.5 || !visible ? 1 : 1 - Math.exp(-dt / GLIDE_SECONDS);
+    const x = cur[1] + (px.value - cur[1]) * k;
+    const y = cur[2] + (py.value - cur[2]) * k;
+    const sc = cur[3] + (ps.value - cur[3]) * k;
+    const roll = cur[4] + (proll.value - cur[4]) * k;
+    const yaw = cur[5] + (pyaw.value - cur[5]) * k;
+    shown.value = [visible ? 1 : 0, x, y, sc, roll, yaw];
 
+    // (x, y) is the shoulder midpoint. Hang the garment below it: its centre is
+    // d = halfHeight - topAbove × shoulderWidth further "down the body" (down = rotated by roll).
+    const halfH = halfHeightUnit * sc;
+    const shoulderWorld = (sc * 2 * widthFraction) / shoulderFactor; // inverse of the scale formula
+    const d = halfH - topAbove * shoulderWorld;
+    const centerX = x + d * Math.sin(roll);
+    const centerY = y - d * Math.cos(roll);
+
+    const s = sc * unitScale;
+    const z = visible ? 0 : HIDDEN_Z;
     transformManager.setEntityPosition(rootEntity, [-cX, -cY, -cZ], false); // reset: T(-center)
     transformManager.setEntityScale(rootEntity, [s, s, s], true);
-    transformManager.setEntityRotation(rootEntity, pyaw.value, [0, 1, 0], true);
-    transformManager.setEntityRotation(rootEntity, proll.value, [0, 0, 1], true);
-    transformManager.setEntityPosition(rootEntity, [px.value, py.value, z], true);
-  }, [rootEntity, transformManager, cX, cY, cZ, unitScale, px, py, ps, proll, pyaw, pvisible]);
+    transformManager.setEntityRotation(rootEntity, yaw, [0, 1, 0], true);
+    transformManager.setEntityRotation(rootEntity, roll, [0, 0, 1], true);
+    transformManager.setEntityPosition(rootEntity, [centerX, centerY, z], true);
+  }, [rootEntity, transformManager, cX, cY, cZ, unitScale, halfHeightUnit, widthFraction, shoulderFactor, topAbove, px, py, ps, proll, pyaw, pvisible, shown]);
 
   return null;
 }
 
 /** Owns its own 500 ms timer, so the debug text no longer re-renders the whole camera/3D screen. */
-function DebugBox({ dbgRef }: { dbgRef: React.MutableRefObject<{ results: number; withPose: number; lmCount: number; err: string }> }) {
+function DebugBox({ stats, pluginOk }: { stats: PoseStats; pluginOk: boolean }) {
   const [text, setText] = useState('waiting for pose results...');
   const tick = useCallback(() => {
-    const d = dbgRef.current;
-    setText(`results: ${d.results}\nwith pose: ${d.withPose}\nlandmarks: ${d.lmCount}\nerr: ${d.err || '-'}`);
-  }, [dbgRef]);
+    if (!pluginOk) {
+      setText('fitviewPose plugin NOT found\n(rebuild the Android app)');
+      return;
+    }
+    setText(
+      `frames analysed: ${stats.frames.value}\nwith pose: ${stats.found.value}\ninference: ${Math.round(stats.inferenceMs.value)} ms\n` +
+        `shoulder vis: ${stats.shoulderVis.value.toFixed(2)} (need 0.50)\nhip vis: ${stats.hipVis.value.toFixed(2)} (optional)\n` +
+        `mask: ${stats.maskMode.value > 0.5 ? 'ON' : 'OFF (pose only)'}  used: ${stats.masksUsed.value}\n` +
+        `occluder L: ${stats.occLeft.value > 0.5 ? 'ON' : 'off'} (thick ${stats.occThickL.value.toFixed(2)})  ` +
+        `R: ${stats.occRight.value > 0.5 ? 'ON' : 'off'} (thick ${stats.occThickR.value.toFixed(2)})` +
+        (stats.lastError.value ? `\nERROR: ${stats.lastError.value}` : '')
+    );
+  }, [stats, pluginOk]);
   useEffect(() => {
     const id = setInterval(tick, 500);
     return () => clearInterval(id);
@@ -491,6 +421,8 @@ const styles = StyleSheet.create({
   topBar: { position: 'absolute', top: 50, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' },
   iconButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   iconText: { fontSize: 20, color: '#FFFFFF' },
+  topBarRight: { flexDirection: 'row', gap: 10 },
+  debugBtnText: { fontSize: 10, fontWeight: '700', color: '#00E676' },
   debugBox: { position: 'absolute', top: 100, left: 12, backgroundColor: 'rgba(0,0,0,0.65)', padding: 8, borderRadius: 8 },
   debugText: { color: '#0f0', fontSize: 12 },
   trackingPill: { position: 'absolute', top: '45%', alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.9)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
@@ -503,5 +435,11 @@ const styles = StyleSheet.create({
   thumbnailWrapperSelected: { borderColor: '#C1622F' },
   thumbnail: { width: '100%', height: '100%' },
   captureRow: { alignItems: 'center' },
-  captureButton: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#FFFFFF', borderWidth: 4, borderColor: 'rgba(255,255,255,0.4)' },
+  captureButton: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#FFFFFF', borderWidth: 4, borderColor: 'rgba(255,255,255,0.4)', alignItems: 'center', justifyContent: 'center' },
+  captureSpinner: { position: 'absolute' },
+  previewContainer: { flex: 1, backgroundColor: '#000000', justifyContent: 'center' },
+  previewImage: { flex: 1 },
+  previewBar: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
+  previewBtn: { backgroundColor: '#C1622F', paddingHorizontal: 28, paddingVertical: 12, borderRadius: 24 },
+  previewBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
 });

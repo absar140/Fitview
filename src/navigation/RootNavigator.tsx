@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import PoseDebugScreen from '../features/tryon/PoseDebugScreen';
+import SegmentationDebugScreen from '../features/tryon/SegmentationDebugScreen';
 import HomeScreen from '../features/home/HomeScreen';
 import CategoriesScreen from '../features/categories/CategoriesScreen';
 import TryOnScreen from '../features/tryon/TryOnScreen';
@@ -34,6 +35,7 @@ export type RootStackParamList = {
   TryOn: { garmentId: string };
   FilamentTest: undefined; 
    PoseDebug: undefined;       
+  SegmentationDebug: undefined;
   Checkout: undefined;
   OrderConfirmed: undefined;
   CategoryListing: { categoryId: string; categoryLabel: string };
@@ -134,6 +136,7 @@ export default function RootNavigator() {
         <Stack.Screen name="TrackOrder" component={TrackOrderScreen} />
         <Stack.Screen component={FilamentTestScreen} name="FilamentTest"/>
         <Stack.Screen name="PoseDebug" component={PoseDebugScreen} />
+        <Stack.Screen name="SegmentationDebug" component={SegmentationDebugScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
