@@ -111,6 +111,9 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // Phase 3: our own pose plugin (PoseLandmarksPlugin.kt). Same version react-native-mediapipe-posedetection uses.
+    implementation("com.google.mediapipe:tasks-vision:0.10.26")
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
